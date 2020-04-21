@@ -53,12 +53,17 @@ class Query(
     }
   }
 
-  lazy val tablesInvolved = buildDataFrame.queryExecution.logical collect {
-    case UnresolvedRelation(tableIdentifier) => {
-      // We are ignoring the database name.
-      tableIdentifier.table
+  lazy val tablesInvolved =
+    if (sqlContext.sparkContext.version.startsWith("2.")) { // Only for Spark 2.x
+      buildDataFrame.queryExecution.logical collect {
+        case UnresolvedRelation(tableIdentifier) => {
+          // We are ignoring the database name.
+          tableIdentifier.table //This does not run on Spark 3.x
+        }
+      }
+    } else {
+      Seq("")
     }
-  }
 
   def newDataFrame() = buildDataFrame
 

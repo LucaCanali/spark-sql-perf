@@ -26,6 +26,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Dataset, DataFrame, SQLContext, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
 import org.apache.spark.SparkContext
 
@@ -330,41 +331,43 @@ object Benchmark {
     val resultsFuture = Future {
 
       // If we're running queries, create tables for them
-      executionsToRun
-        .collect { case query: Query => query }
-        .flatMap { query =>
-          try {
-            query.newDataFrame().queryExecution.logical.collect {
-              case UnresolvedRelation(t) => t.table
-            }
-          } catch {
-            // ignore the queries that can't be parsed
-            case e: Exception => Seq()
-          }
-        }
-        .distinct
-        .foreach { name =>
-          try {
-            sqlContext.table(name)
-            logMessage(s"Table $name exists.")
-          } catch {
-            case ae: Exception =>
-              val table = allTables
-                .find(_.name == name)
-              if (table.isDefined) {
-                logMessage(s"Creating table: $name")
-                table.get.data
-                  .write
-                  .mode("overwrite")
-                  .saveAsTable(name)
-              } else {
-                // the table could be subquery
-                logMessage(s"Couldn't read table $name and its not defined as a Benchmark.Table.")
+      if (sqlContext.sparkContext.version.startsWith("2.")) { // Only for Spark 2.x
+        executionsToRun
+          .collect { case query: Query => query }
+          .flatMap { query =>
+            try {
+              query.newDataFrame().queryExecution.logical.collect {
+                case UnresolvedRelation(t) => t.table //This does not run on Spark 3.x
               }
+            } catch {
+              // ignore the queries that can't be parsed
+              case e: Exception => Seq()
+            }
           }
-        }
+          .distinct
+          .foreach { name =>
+            try {
+              sqlContext.table(name)
+              logMessage(s"Table $name exists.")
+            } catch {
+              case ae: Exception =>
+                val table = allTables
+                  .find(_.name == name)
+                if (table.isDefined) {
+                  logMessage(s"Creating table: $name")
+                  table.get.data
+                    .write
+                    .mode("overwrite")
+                    .saveAsTable(name)
+                } else {
+                  // the table could be subquery
+                  logMessage(s"Couldn't read table $name and its not defined as a Benchmark.Table.")
+                }
+            }
+          }
+      }
 
-      // Run the benchmarks!
+        // Run the benchmarks!
       val results: Seq[ExperimentRun] = (1 to iterations).flatMap { i =>
         combinations.map { setup =>
           val currentOptions = variations.asInstanceOf[Seq[Variation[Any]]].zip(setup).map {
